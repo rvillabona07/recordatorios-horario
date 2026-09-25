@@ -179,8 +179,9 @@ function mensajeCuenta(cuenta, nombre, neto) {
 }
 
 // Cuentas divididas desde la pestaña "Cuentas" de la app: avisa a cada
-// participante cuánto debe y a quién, una sola vez por cuenta.
-async function avisarCuentasNuevas(db, tokenPorUid, preferenciasPorUid, envios, escrituras) {
+// participante cuánto debe y a quién, una sola vez por cuenta. Solo a los
+// amigos aceptados de quien la creó (un desconocido no puede cobrarte).
+async function avisarCuentasNuevas(db, tokenPorUid, preferenciasPorUid, amigosPorUid, envios, escrituras) {
   const snapshotCuentas = await db.collection("cuentas").get();
   const todas = snapshotCuentas.docs.map((d) => d.data());
 
@@ -196,9 +197,11 @@ async function avisarCuentasNuevas(db, tokenPorUid, preferenciasPorUid, envios, 
       console.error("Error obteniendo perfil:", error.message);
     }
 
+    const amigosDelCreador = amigosPorUid[cuenta.creador] || [];
     (cuenta.participantes || []).forEach((uid) => {
       const token = tokenPorUid[uid];
       if (!token || !quiere(preferenciasPorUid[uid], "cuentas")) return;
+      if (!amigosDelCreador.includes(uid)) return;
       const mensaje = mensajeCuenta(cuenta, nombre, saldoEntre(todas, uid, cuenta.creador));
       envios.push(
         admin
@@ -397,7 +400,7 @@ async function main() {
 
   // Un error con las cuentas no debe frenar los avisos de clases.
   try {
-    await avisarCuentasNuevas(db, tokenPorUid, preferenciasPorUid, envios, escrituras);
+    await avisarCuentasNuevas(db, tokenPorUid, preferenciasPorUid, amigosPorUid, envios, escrituras);
   } catch (error) {
     console.error("Error revisando cuentas:", error.message);
   }
