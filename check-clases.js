@@ -219,11 +219,48 @@ async function avisarCuentasNuevas(db, tokenPorUid, preferenciasPorUid, amigosPo
   }
 }
 
+// Una sola vez: reserva en apodos/ los apodos que ya existían de antes de
+// que fueran únicos (con la misma clave que usa la app: minúsculas y sin
+// espacios de más). Si dos personas tenían el mismo, lo reserva el primero;
+// el otro lo conserva hasta que lo cambie. Después solo lee config/apodos.
+async function reservarApodosViejos(db) {
+  const marca = db.collection("config").doc("apodos");
+  if ((await marca.get()).data()?.reservados) return;
+
+  const perfiles = await db.collection("perfiles").get();
+  let reservados = 0;
+  let repetidos = 0;
+  for (const perfil of perfiles.docs) {
+    const { apodo, apodoClave } = perfil.data();
+    if (typeof apodo !== "string" || apodoClave) continue;
+    const clave = apodo.trim().toLowerCase().replace(/ +/g, " ");
+    if (!clave || clave.includes("/") || /^\.*$/.test(clave) || /^__.*__$/.test(clave)) continue;
+    const referencia = db.collection("apodos").doc(clave);
+    const quedoReservado = await db.runTransaction(async (transaccion) => {
+      if ((await transaccion.get(referencia)).exists) return false;
+      transaccion.set(referencia, { uid: perfil.id });
+      transaccion.update(perfil.ref, { apodoClave: clave });
+      return true;
+    });
+    if (quedoReservado) reservados++;
+    else repetidos++;
+  }
+  await marca.set({ reservados: true, fecha: Date.now() });
+  console.log(`Apodos viejos reservados: ${reservados} (repetidos: ${repetidos}).`);
+}
+
 async function main() {
   const { dia, horaMinuto } = obtenerDiaYHoraLocal();
   console.log(`Revisión: dia=${dia} horaMinuto=${horaMinuto}`);
 
   const db = admin.firestore();
+
+  // Un error aquí no debe frenar los avisos de clases.
+  try {
+    await reservarApodosViejos(db);
+  } catch (error) {
+    console.error("Error reservando apodos:", error.message);
+  }
 
   const [snapshotHorarios, snapshotEstados, snapshotSolicitudes, snapshotRegistros] = await Promise.all([
     db.collection("horarios").get(),
